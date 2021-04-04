@@ -1,6 +1,10 @@
-txt = ""
 import sys
-for t in range(sys.maxsize):
-    txt += t
+message = "Holaaaaaaaa".encode("utf-8")
+message_length = len(message)
+message = (message_length).to_bytes(2, sys.byteorder) + message
 
-print(txt)
+print(message)
+
+header = message[:2]
+print(int.from_bytes(header, sys.byteorder, signed=False))
+print(len("Holaaaaaaaa"))

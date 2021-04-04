@@ -6,6 +6,7 @@ import socket
 import threading
 import queue
 import logging
+import signal
 
 os.environ["DEBUG_LEVEL"] = str(logging.DEBUG)
 
@@ -15,7 +16,7 @@ logger.setLevel(int(os.getenv("DEBUG_LEVEL", logging.INFO)))
 
 
 _HEADER_BYTES_ = 2
-_BYTES_ORDER_ = repr(sys.byteorder)
+_BYTES_ORDER_ = sys.byteorder
 
 
 class SData(object):
@@ -36,6 +37,8 @@ class SockClient(object):
         self.sock.connect_ex((self._server, self._addr))
 
         self.server_message = queue.Queue()
+        self._server_thread = None
+        self._stop_thread = False
         self._start_listen_server()
 
         # unique object id
@@ -43,10 +46,11 @@ class SockClient(object):
         SockClient._count += 1
 
     def send_data(self, message):
+        message = message.encode("utf-8")
         message_length = len(message)
 
         # header
-        message = (message_length).to_bytes(2, _BYTES_ORDER_) + message
+        message = (message_length).to_bytes(_HEADER_BYTES_, _BYTES_ORDER_) + message
 
         while message:
             sent = self.sock.send(message)
@@ -56,27 +60,36 @@ class SockClient(object):
             message = message[sent:]
 
     def _start_listen_server(self):
-        thrd = threading.Thread(target=self.receive_data)
-        thrd.daemon = True
-        thrd.start()
+        self._server_thread = threading.Thread(target=self.receive_data)
+        self._server_thread.daemon = True
+        self._server_thread.start()
 
     def receive_data(self):
         # TODO: Byte order
-        body_length = b""
-        while len(body_length) < _HEADER_BYTES_:
-            # Function waits here to a new header.
-            body_length += self.sock.recv(_HEADER_BYTES_ - len(body_length))
+        while self.is_running:
 
-        body_length = int.from_bytes(body_length, _BYTES_ORDER_, signed=False)
-        logger.debug("Body length: %s" % body_length)
+            body_length = b""
+            while len(body_length) < _HEADER_BYTES_:
+                # Function waits here to a new header.
+                body_length += self.sock.recv(_HEADER_BYTES_ - len(body_length))
 
-        message = b""
-        while len(message) < body_length:
-            rec_tmp = self.sock.recv(body_length - len(message))
-            logger.debug(rec_tmp)
-            message += rec_tmp
+            body_length = int.from_bytes(body_length, _BYTES_ORDER_, signed=False)
 
-        self.server_message.put(message)
+            message = b""
+            while len(message) < body_length:
+                rec_tmp = self.sock.recv(body_length - len(message))
+                message += rec_tmp
+
+            self.server_message.put(message)
+
+    @property
+    def is_running(self):
+        return not self._stop_thread
+
+    def close(self):
+        self._stop_thread = True
+        self._server_thread.join()
+        self.sock.close()
 
 
 class ConsoleInput(object):
@@ -87,7 +100,7 @@ class ConsoleInput(object):
     # console input
     def add_input(self):
         while True:
-            self.message_queue.put(sys.stdin.readline())
+            self.message_queue.put(sys.stdin.readline().strip())
 
     def _start_thread(self):
         input_thread = threading.Thread(target=self.add_input)
@@ -102,17 +115,20 @@ class ClientService(object):
 
     def run(self):
         try:
-            while True:
+            while self.sock_client.is_running:
                 if not self.sock_client.server_message.empty():
-                    logger.info(self.sock_client.server_message.get())
+                    logger.info(self.sock_client.server_message.get().decode("utf-8"))
 
                 if not self.console_input.message_queue.empty():
                     message = self.console_input.message_queue.get()
-                    self.sock_client.send_data(message)
-                    logger.info(message)
+                    if message == "exit()":
+                        self.sock_client.close()
+                    else:
+                        self.sock_client.send_data(message)
 
         except KeyboardInterrupt as e:
-            logger.error("Close Client")
+            self.sock_client.close()
+            logger.info("Close Client")
             sys.exit(0)
 
 
