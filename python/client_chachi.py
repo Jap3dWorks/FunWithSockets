@@ -6,17 +6,27 @@ import socket
 import threading
 import queue
 import logging
-import signal
 
-os.environ["DEBUG_LEVEL"] = str(logging.DEBUG)
 
 logging.basicConfig()
 logger = logging.getLogger(__name__)
 logger.setLevel(int(os.getenv("DEBUG_LEVEL", logging.INFO)))
 
 
-_HEADER_BYTES_ = 2
+_HEADER_BYTES_ = 4
 _BYTES_ORDER_ = sys.byteorder
+# TODO: Max length of message with the header
+_MAX_SIZE_ = (2 ^ (_HEADER_BYTES_ * 8)) - 1
+
+
+# class HeaderOffsets:
+#     type = 0  # 0, 1, 2
+#     Size = 1
+#     type = 1 + _HEADER_BYTES_
+#     
+    # name =
+
+# TODO: buscar una forma de escuchar si tengo data pendiente en el socket del cliente
 
 
 class SData(object):
@@ -36,9 +46,11 @@ class SockClient(object):
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.sock.connect_ex((self._server, self._addr))
 
+        # self.sock.setblocking(False)
+
         self.server_message = queue.Queue()
         self._server_thread = None
-        self._stop_thread = False
+        self._close = False
         self._start_listen_server()
 
         # unique object id
@@ -67,51 +79,81 @@ class SockClient(object):
     def receive_data(self):
         # TODO: Byte order
         while self.is_running:
-
             body_length = b""
             while len(body_length) < _HEADER_BYTES_:
                 # Function waits here to a new header.
-                body_length += self.sock.recv(_HEADER_BYTES_ - len(body_length))
+                try:
+                    body_length += self.sock.recv(_HEADER_BYTES_ - len(body_length))
+                except socket.timeout as e:
+                    logger.exception("Fail receiving socket data.")
+                    continue
 
             body_length = int.from_bytes(body_length, _BYTES_ORDER_, signed=False)
+            if not body_length:
+                logger.info("Break socket loop")
+                break
 
             message = b""
             while len(message) < body_length:
-                rec_tmp = self.sock.recv(body_length - len(message))
+                try:
+                    rec_tmp = self.sock.recv(body_length - len(message))
+                except socket.timeout as e:
+                    logger.exception("Fail receiving socket data.")
+                    continue
+                if not rec_tmp:
+                    self.close()
+                    break
+
                 message += rec_tmp
 
             self.server_message.put(message)
 
+        self._close = True
+        self.sock.shutdown(socket.SHUT_RD)
+        self.sock.close()
+
     @property
     def is_running(self):
-        return not self._stop_thread
+        return not self._close
 
     def close(self):
-        self._stop_thread = True
-        self._server_thread.join()
-        self.sock.close()
+        if not self._close:
+            self.send_data("")
 
 
 class ConsoleInput(object):
     def __init__(self):
+        self._close = False
         self.message_queue = queue.Queue()
         self._start_thread()
 
     # console input
     def add_input(self):
-        while True:
-            self.message_queue.put(sys.stdin.readline().strip())
+        while not self._close:
+            message = sys.stdin.readline().strip()
+            if not message:
+                continue
+            self.message_queue.put(message)
 
     def _start_thread(self):
         input_thread = threading.Thread(target=self.add_input)
         input_thread.daemon = True
         input_thread.start()
 
+    def close(self):
+        if not self._close:
+            self._close = True
+
 
 class ClientService(object):
     def __init__(self, server, addr):
         self.sock_client = SockClient(server, addr)
         self.console_input = ConsoleInput()
+        self.exit_command = "exit"
+
+    def close(self):
+        self.sock_client.close()
+        self.console_input.close()
 
     def run(self):
         try:
@@ -121,15 +163,14 @@ class ClientService(object):
 
                 if not self.console_input.message_queue.empty():
                     message = self.console_input.message_queue.get()
-                    if message == "exit()":
-                        self.sock_client.close()
+                    if message == self.exit_command:
+                        self.close()
                     else:
                         self.sock_client.send_data(message)
 
         except KeyboardInterrupt as e:
-            self.sock_client.close()
+            self.close()
             logger.info("Close Client")
-            sys.exit(0)
 
 
 if __name__ == "__main__":
