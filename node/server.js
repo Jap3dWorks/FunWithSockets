@@ -2,36 +2,33 @@ const { Server } = require('net');
 
 const server = new Server();
 
+const BYTES = 4;
+const MAX_SIZE = Math.pow(2, BYTES*8) - 1;
+
 const options = {
     port: 8000,
     host: '0.0.0.0'
 };
 
-const END = 'END';
-
 const users = new Map();
 
 // FUNCTIONS //
-function newUser(socket, name) {
+function userName(name) {
     const randomColor = () => {
         const d = Math.random() > 0.5 ? '\x1b[1m' : '';
         const u = Math.round(Math.random()*5) + 31;
         return `${d}\x1b[${u}m`;
-    }    
-    const userName = randomColor() + name + '\x1b[0m';
-    users.set(socket, userName);    
-    alert(`Bienvenido ${userName}!`);
-    return userName;
+    };
+    return randomColor() + name + '\x1b[0m';
 }
 
-function write(socket, message) {    
-    const maxSize = 65535-2;
+function write(socket, message) {
     const msgSize = Buffer.byteLength(message, 'utf-8');
-    const size = Math.min(msgSize, maxSize);
+    const size = Math.min(msgSize, MAX_SIZE);
 
-    const buffer = Buffer.alloc(size+2);
-    buffer.writeUInt16LE(size);
-    buffer.write(message, 2, "utf-8"); 
+    const buffer = Buffer.alloc(BYTES + size);
+    buffer.writeUInt32LE(size);
+    buffer.write(message, BYTES, "utf-8"); 
 
     socket.write(buffer);
 }
@@ -53,29 +50,44 @@ function chat(user, message, socket) {
 }
 
 // EVENTS //
-server.on('connection', socket => {
-    //socket.setEncoding('utf-8');
+server.on('connection', socket => {    
+
+    users.set(socket, {});
 
     const remoteSocket = `${socket.remoteAddress}:${socket.remotePort}`;
     console.log(`New connection from ${remoteSocket}`);
 
     write(socket, 'Introduce tu nombre de usuario:');
 
-    socket.on('data', buffer => {
-        let message = buffer.toString('utf-8', 2);
-        if (users.has(socket)) {
-            if (message === END) {
-                socket.end();
-            } 
-            else {                
-                const user = users.get(socket);
-                console.log(`${remoteSocket} -> ${user}: ${message}`);
-                chat(user, message);
-            }
+    socket.on('data', buffer => {        
+        const user = users.get(socket);
+        if (user.message) {
+            user.message += buffer.toString('utf-8');
         }
         else {
-            const user = newUser(socket, message);
-            console.log(`${remoteSocket} -> New user: ${user}`);
+            user.total = buffer.readUInt32LE();    
+            if (user.total > 0) {
+                user.message = buffer.toString('utf-8', BYTES);
+            }            
+            else {
+                const b = Buffer.alloc(BYTES);
+                b.writeInt32LE(0);
+                socket.write(b);     
+                return;           
+            }
+        }
+
+        if (user.message.length === user.total) {
+            if (user.name) {
+                console.log(`${remoteSocket} -> ${user.name}: ${user.message}`);
+                chat(user.name, user.message);
+            }
+            else {
+                user.name = userName(user.message);
+                console.log(`${remoteSocket} -> New user: ${user.name}`);
+                alert(`Bienvenido ${user.name}!`);
+            }
+            delete user.message;
         }
     });
 
@@ -84,8 +96,8 @@ server.on('connection', socket => {
     socket.on('close', hasError => {
         const user = users.get(socket);
         users.delete(socket);
-        console.log(`${remoteSocket} -> ${user} disconnected`);
-        alert(`${user} se desconectó!`, socket); 
+        console.log(`${remoteSocket} -> ${user.name} disconnected`);
+        alert(`${user.name} se desconectó!`, socket); 
     });
 });
 
