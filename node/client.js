@@ -4,26 +4,29 @@ const readline = require('readline').createInterface({
     output: process.stdout
 });
 
-const END = 'END';
-
 const socket = new Socket();
 
+const BYTES = 4;
+const MAX_SIZE = Math.pow(2, BYTES*8) - 1;
+
 socket.connect({host: 'localhost', port:8000});
-//socket.setEncoding('utf-8');
+
+const packet = {}
 
 readline.on('line', message => {
-    const maxSize = 65535-2;
-    const msgSize = Buffer.byteLength(message);
-    const size = Math.min(msgSize, maxSize);
-
-    const buffer = Buffer.alloc(size+2);
-    buffer.writeUInt16LE(size);
-    buffer.write(message, 2, "utf-8"); 
-
-    socket.write(buffer);
-    /*if (message === END) {
+    if (message !== 'exit') {
+        const msgSize = Buffer.byteLength(message);        
+        const size = Math.min(msgSize, MAX_SIZE);
+    
+        const buffer = Buffer.alloc(BYTES + size);
+        buffer.writeUInt32LE(size);
+        buffer.write(message, BYTES, "utf-8");         
+    
+        socket.write(buffer);
+    }
+    else {
         socket.end();
-    }*/
+    }
 })
 
 socket.on('close', err => {
@@ -37,13 +40,25 @@ socket.on('close', err => {
 });
 
 socket.on('data', buffer => {
-    console.log(buffer.toString('utf-8', 2));
+    if (packet.message) {
+        packet.message += buffer.toString('utf-8');
+    }
+    else {
+        packet.total = buffer.readUInt32LE();
+        packet.message = buffer.toString('utf-8', BYTES);
+    }
+
+    if (packet.message.length === packet.total) {
+        console.log(packet.message);
+        delete packet.message;
+    }
 });
 
 // PROCESS HANDLING // 
 process.stdin.resume();
 
 async function exitHandler(options, exitCode = 0) {    
+    console.log(exitCode);
     if (options.exit) {
         socket.end();
     }
