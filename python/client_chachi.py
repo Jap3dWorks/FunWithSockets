@@ -6,119 +6,55 @@ import socket
 import threading
 import queue
 import logging
-
+from python.header_message import HeaderMessage
 
 logging.basicConfig()
 logger = logging.getLogger(__name__)
 logger.setLevel(int(os.getenv("DEBUG_LEVEL", logging.INFO)))
 
 
-_HEADER_BYTES_ = 4
-_BYTES_ORDER_ = sys.byteorder
-# TODO: Max length of message with the header
-_MAX_SIZE_ = (2 ^ (_HEADER_BYTES_ * 8)) - 1
-
-
-# class HeaderOffsets:
-#     type = 0  # 0, 1, 2
-#     Size = 1
-#     type = 1 + _HEADER_BYTES_
-#     
-    # name =
-
 # TODO: buscar una forma de escuchar si tengo data pendiente en el socket del cliente
 
-
-class SData(object):
-    def __init__(self, **kwargs):
-        for k, v in kwargs.items():
-            setattr(self, k, v)
-
-
 class SockClient(object):
-    _count = 0
 
-    def __init__(self, server, addr):
-        self._server = server
-        self._addr = addr
-
-        # start socket
+    def __init__(self):
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.sock.connect_ex((self._server, self._addr))
-
-        # self.sock.setblocking(False)
-
+        self._is_running = False
         self.server_message = queue.Queue()
-        self._server_thread = None
-        self._close = False
-        self._start_listen_server()
 
-        # unique object id
-        self.id = SockClient._count
-        SockClient._count += 1
+    def connect(self, address):
+        self.sock.connect(address)
+        self._is_running = True
 
-    def send_data(self, message):
-        message = message.encode("utf-8")
-        message_length = len(message)
+        thread = threading.Thread(
+            target=self._thread_listen)
 
-        # header
-        message = (message_length).to_bytes(_HEADER_BYTES_, _BYTES_ORDER_) + message
+        thread.daemon = True
+        thread.start()
 
-        while message:
-            sent = self.sock.send(message)
-            if sent == 0:
-                raise RuntimeError("Socket connection broken")
+    def _thread_listen(self):
+        mssg_hdr = HeaderMessage()
 
-            message = message[sent:]
-
-    def _start_listen_server(self):
-        self._server_thread = threading.Thread(target=self.receive_data)
-        self._server_thread.daemon = True
-        self._server_thread.start()
-
-    def receive_data(self):
-        # TODO: Byte order
-        while self.is_running:
-            body_length = b""
-            while len(body_length) < _HEADER_BYTES_:
-                # Function waits here to a new header.
-                try:
-                    body_length += self.sock.recv(_HEADER_BYTES_ - len(body_length))
-                except socket.timeout as e:
-                    logger.exception("Fail receiving socket data.")
-                    continue
-
-            body_length = int.from_bytes(body_length, _BYTES_ORDER_, signed=False)
-            if not body_length:
-                logger.info("Break socket loop")
+        while self._is_running:
+            mssg_hdr.collect_message(self.sock)
+            if not mssg_hdr:
+                self._is_running = False
                 break
 
-            message = b""
-            while len(message) < body_length:
-                try:
-                    rec_tmp = self.sock.recv(body_length - len(message))
-                except socket.timeout as e:
-                    logger.exception("Fail receiving socket data.")
-                    continue
-                if not rec_tmp:
-                    self.close()
-                    break
+            self.server_message.put(mssg_hdr.message)
 
-                message += rec_tmp
-
-            self.server_message.put(message)
-
-        self._close = True
-        self.sock.shutdown(socket.SHUT_RD)
+        self.sock.shutdown(socket.SHUT_RDWR)
         self.sock.close()
+
+    def send_data(self, data):
+        self.sock.sendall(HeaderMessage().set_message(data).to_bytes())
+
+    def close(self):
+        self.sock.sendall(HeaderMessage().to_bytes())
 
     @property
     def is_running(self):
-        return not self._close
-
-    def close(self):
-        if not self._close:
-            self.send_data("")
+        return self._is_running
 
 
 class ConsoleInput(object):
@@ -145,9 +81,10 @@ class ConsoleInput(object):
             self._close = True
 
 
-class ClientService(object):
+class ConsoleClient(object):
     def __init__(self, server, addr):
-        self.sock_client = SockClient(server, addr)
+        self.sock_client = SockClient()
+        self.sock_client.connect((server, addr))
         self.console_input = ConsoleInput()
         self.exit_command = "exit"
 
