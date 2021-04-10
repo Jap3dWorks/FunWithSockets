@@ -14,16 +14,9 @@ logger.setLevel(int(os.getenv("DEBUG_LEVEL", logging.INFO)))
 
 
 # TODO: buscar una forma de escuchar si tengo data pendiente en el socket del cliente
-""""
-Damas
-0 -> team 
-0 -> ciclada 
-000000 -> 64
-tablero
-[1, ... ,32]
-"""
 
 class SockClient(object):
+    MessageClass = HeaderMessage
 
     def __init__(self):
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -41,7 +34,7 @@ class SockClient(object):
         thread.start()
 
     def _thread_listen(self):
-        mssg_hdr = HeaderMessage()
+        mssg_hdr = self.MessageClass()
 
         while self._is_running:
             mssg_hdr.collect_message(self.sock)
@@ -55,10 +48,10 @@ class SockClient(object):
         self.sock.close()
 
     def send_data(self, data):
-        self.sock.sendall(HeaderMessage().set_message(data).to_bytes())
+        self.sock.sendall(self.MessageClass().set_message(data).to_bytes())
 
     def close(self):
-        self.sock.sendall(HeaderMessage().to_bytes())
+        self.sock.sendall(self.MessageClass().to_bytes())
 
     @property
     def is_running(self):
