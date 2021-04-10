@@ -1,4 +1,4 @@
-from python import client_chachi
+from python.funnet import client_chachi
 import os
 # import signal
 

@@ -4,9 +4,8 @@ import sys
 import os
 import socket
 import threading
-import queue
 import logging
-from python.header_message import HeaderMessage
+from python.funnet.header_message import HeaderMessage
 
 logging.basicConfig()
 logger = logging.getLogger(__name__)
@@ -68,7 +67,7 @@ class SockServer(object):
         self.sock.close()
 
     @staticmethod
-    def treaded_server(address, port):
+    def threaded_server(address, port):
         server = SockServer(address, port)
         thread = threading.Thread(
             target=server.run

@@ -6,7 +6,7 @@ import socket
 import threading
 import queue
 import logging
-from python.header_message import HeaderMessage
+from python.funnet.header_message import HeaderMessage
 
 logging.basicConfig()
 logger = logging.getLogger(__name__)
@@ -14,6 +14,14 @@ logger.setLevel(int(os.getenv("DEBUG_LEVEL", logging.INFO)))
 
 
 # TODO: buscar una forma de escuchar si tengo data pendiente en el socket del cliente
+""""
+Damas
+0 -> team 
+0 -> ciclada 
+000000 -> 64
+tablero
+[1, ... ,32]
+"""
 
 class SockClient(object):
 

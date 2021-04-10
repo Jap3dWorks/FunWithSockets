@@ -14,10 +14,14 @@ logger = logging.getLogger(__name__)
 logger.setLevel(int(os.getenv("DEBUG_LEVEL", logging.INFO)))
 
 
+class HeaderSizes(enum.Enum):
+    active = 1
+
+
 class HeaderMessage(object):
     def __init__(self):
         # if connection must be closed
-        self._active = (0).to_bytes(1, _BYTES_ORDER_, signed=False)
+        self._active = (0).to_bytes(HeaderSizes.active.value, _BYTES_ORDER_, signed=False)
         self._title_size = b""
         self._title = b""
         self._message_size = b""
@@ -79,4 +83,3 @@ class HeaderMessage(object):
 
     def message_to_str(self):
         return self._message.decode("utf-8")
-
